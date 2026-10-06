@@ -81,6 +81,7 @@ Claude session transcripts are stored in `~/.oc_mcp/claude-sessions.json`.
 - **Long tasks:** if a turn runs past `timeout_s`, you get `status: running`; use `check_status` to collect the result.
 - **opencode permissions:** in delegate mode, opencode may stop with `status: needs_permission`. Answer with `respond_permission`, or allow the actions in opencode's `permission` config.
 - **Models:** the opencode free tier (`opencode/*`) rejects headless/API use, so configure a real provider.
+- **Local Ollama models:** Ollama's default context window is too small for opencode's system prompt, so the model sees a cut-off prompt and gives unrelated answers. Create a variant with a larger window (`FROM qwen3.5:9b` + `PARAMETER num_ctx 32768` → `ollama create qwen3.5:9b-32k -f Modelfile`) and use that in opencode.
 
 ## Development
 

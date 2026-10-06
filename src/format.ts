@@ -4,7 +4,7 @@ function clip(s: string, n = MAX_ARG): string {
   const one = s.replace(/\s+/g, " ").trim();
   if (one.length <= n) return one;
   // For paths the tail (file name) matters most.
-  return /^([a-zA-Z]:)?[\\/]/.test(one) ? "…" + one.slice(-(n - 1)) : one.slice(0, n - 1) + "…";
+  return /^\S*[\\/]\S*$/.test(one) ? "…" + one.slice(-(n - 1)) : one.slice(0, n - 1) + "…";
 }
 
 /** Pick the most telling field of a tool input for a one-line summary. */

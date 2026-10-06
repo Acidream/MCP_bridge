@@ -209,8 +209,11 @@ export class OpencodeBackend implements Backend {
 }
 
 function textOf(parts: Part[]): string {
-  return parts
-    .filter((p) => p.type === "text" && !p.synthetic && p.text)
-    .map((p) => p.text!.trim())
-    .join("\n\n");
+  const pick = (type: string) =>
+    parts
+      .filter((p) => p.type === type && !p.synthetic && p.text?.trim())
+      .map((p) => p.text!.trim())
+      .join("\n\n");
+  // Some local models (e.g. qwen) put the whole answer in reasoning and emit no text part.
+  return pick("text") || pick("reasoning");
 }
