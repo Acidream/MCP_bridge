@@ -87,7 +87,7 @@ export class ClaudeBackend implements Backend {
     if (args.model) cliArgs.push("--model", args.model);
     if (args.agent) cliArgs.push("--agent", args.agent);
     const allowed = process.env.OC_MCP_CLAUDE_ALLOWED_TOOLS;
-    if (args.mode === "delegate" && allowed) cliArgs.push("--allowedTools", ...allowed.split(/[\s,]+/).filter(Boolean));
+    if (args.mode === "delegate" && allowed) cliArgs.push("--allowedTools", ...splitToolRules(allowed));
 
     const proc = spawn(this.bin, cliArgs, { cwd: stored.cwd, env: childEnv(), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     const job: Job = { proc, actions: [], done: false };
@@ -230,4 +230,9 @@ function killTree(proc: ChildProcess): void {
   } else {
     proc.kill();
   }
+}
+
+/** Splits "Bash(npm test:*) Bash(git diff:*), Read" on whitespace/commas outside parentheses. */
+export function splitToolRules(s: string): string[] {
+  return s.match(/[^\s,(]+(?:\([^)]*\))?/g) ?? [];
 }

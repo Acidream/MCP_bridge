@@ -4,6 +4,7 @@ import { actionLine } from "./format.js";
 
 const TITLE_PREFIX = "[oc-mcp] ";
 const POLL_MS = 1000;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 interface Part {
   type: string;
@@ -42,12 +43,21 @@ export class OpencodeBackend implements Backend {
     url.searchParams.set("directory", this.cwd);
     for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
     let res: Response;
+    let text: string;
     try {
-      res = await fetch(url, { method, headers: this.headers, body: body === undefined ? undefined : JSON.stringify(body) });
+      res = await fetch(url, {
+        method,
+        headers: this.headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      text = await res.text();
     } catch (e) {
+      if ((e as Error).name === "TimeoutError") {
+        throw new Error(`opencode ${method} ${path} timed out after ${REQUEST_TIMEOUT_MS / 1000}s; is the server hung?`);
+      }
       throw new Error(`Cannot reach opencode server at ${this.baseUrl} (start it with \`opencode serve\`): ${(e as Error).message}`);
     }
-    const text = await res.text();
     if (!res.ok) throw new Error(`opencode ${method} ${path} -> ${res.status}: ${text.slice(0, 500)}`);
     return (text ? JSON.parse(text) : undefined) as T;
   }

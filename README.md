@@ -70,7 +70,7 @@ In `opencode.json` (global `~/.config/opencode/opencode.json` or per project):
 ```
 
 Environment variables for this mode:
-- `OC_MCP_CLAUDE_ALLOWED_TOOLS`: extra tools allowed in delegate mode, e.g. `"Bash(npm test:*) Bash(git diff:*)"`. Without it, Claude can edit files but not run shell commands, because headless runs can't ask for permission.
+- `OC_MCP_CLAUDE_ALLOWED_TOOLS`: extra tools allowed in delegate mode, separated by spaces or commas, e.g. `"Bash(npm test:*) Bash(git diff:*), Read"`. Without it, Claude can edit files but not run shell commands, because headless runs can't ask for permission.
 - `OC_MCP_CLAUDE_BIN`: path to `claude` if it's not on `PATH`.
 
 - On Windows, point `OC_MCP_CLAUDE_BIN` at a real executable (the native installer's `claude.exe`); npm's `claude.cmd` shim can't be spawned without a shell.
