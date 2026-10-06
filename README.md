@@ -73,7 +73,9 @@ Environment variables for this mode:
 - `OC_MCP_CLAUDE_ALLOWED_TOOLS`: extra tools allowed in delegate mode, e.g. `"Bash(npm test:*) Bash(git diff:*)"`. Without it, Claude can edit files but not run shell commands, because headless runs can't ask for permission.
 - `OC_MCP_CLAUDE_BIN`: path to `claude` if it's not on `PATH`.
 
-Claude session transcripts are stored in `~/.oc_mcp/claude-sessions.json`.
+- On Windows, point `OC_MCP_CLAUDE_BIN` at a real executable (the native installer's `claude.exe`); npm's `claude.cmd` shim can't be spawned without a shell.
+
+Claude session transcripts are stored in `~/.oc_mcp/claude-sessions/<session_id>.json` (an older `~/.oc_mcp/claude-sessions.json` is migrated automatically and kept as `.bak`).
 
 ## Notes
 

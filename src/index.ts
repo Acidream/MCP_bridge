@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -30,7 +31,8 @@ if (opts.target === "opencode") {
 }
 
 const peer = backend.peer;
-const server = new McpServer({ name: `oc-mcp-${peer}`, version: "0.1.0" });
+const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const server = new McpServer({ name: `oc-mcp-${peer}`, version });
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const safe =
@@ -55,7 +57,7 @@ const sendShape = {
   timeout_s: z.number().int().min(1).max(3600).default(300).describe("Max seconds to wait before returning status=running"),
 };
 
-type SendInput = { message: string; mode: "review" | "delegate"; agent?: string; model?: string; wait: boolean; timeout_s: number };
+type SendInput = z.output<z.ZodObject<typeof sendShape>>;
 const toArgs = (a: SendInput): SendArgs => ({
   message: a.message,
   mode: a.mode,

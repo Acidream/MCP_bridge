@@ -1,6 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Backend, HistoryEntry, SendArgs, SessionSummary, TurnResult } from "./backend.js";
@@ -24,28 +24,39 @@ interface Job {
   done: boolean;
 }
 
-const STORE_DIR = join(homedir(), ".oc_mcp");
-const STORE = join(STORE_DIR, "claude-sessions.json");
+const STORE_DIR = join(homedir(), ".oc_mcp", "claude-sessions");
+/** Before 1 file per session: one shared JSON file, which concurrent bridges could clobber. */
+const LEGACY_STORE = join(homedir(), ".oc_mcp", "claude-sessions.json");
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const STDERR_KEEP = 4000;
 
 export class ClaudeBackend implements Backend {
   readonly peer = "claude";
   private jobs = new Map<string, Job>();
 
-  constructor(private cwd: string, private bin = process.env.OC_MCP_CLAUDE_BIN ?? "claude") {}
+  constructor(private cwd: string, private bin = process.env.OC_MCP_CLAUDE_BIN ?? "claude") {
+    mkdirSync(STORE_DIR, { recursive: true });
+    migrateLegacyStore();
+  }
 
-  private load(): Record<string, StoredSession> {
+  private load(sessionId: string): StoredSession | undefined {
+    if (!UUID.test(sessionId)) return undefined;
     try {
-      return JSON.parse(readFileSync(STORE, "utf8"));
+      return JSON.parse(readFileSync(join(STORE_DIR, `${sessionId}.json`), "utf8"));
     } catch {
-      return {};
+      return undefined;
     }
   }
 
+  private loadAll(): StoredSession[] {
+    return readdirSync(STORE_DIR)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => this.load(f.slice(0, -5)))
+      .filter((s): s is StoredSession => !!s);
+  }
+
   private save(s: StoredSession): void {
-    const all = this.load();
-    all[s.id] = s;
-    mkdirSync(STORE_DIR, { recursive: true });
-    writeFileSync(STORE, JSON.stringify(all, null, 2));
+    writeAtomic(join(STORE_DIR, `${s.id}.json`), JSON.stringify(s, null, 2));
   }
 
   async start(title: string | undefined, args: SendArgs): Promise<TurnResult> {
@@ -55,7 +66,7 @@ export class ClaudeBackend implements Backend {
   }
 
   async reply(sessionId: string, args: SendArgs): Promise<TurnResult> {
-    if (!this.load()[sessionId]) throw new Error(`Unknown claude session ${sessionId}`);
+    if (!this.load(sessionId)) throw new Error(`Unknown claude session ${sessionId}`);
     if (this.jobs.get(sessionId)?.done === false) {
       throw new Error(`claude session ${sessionId} is still busy; use check_status or abort first`);
     }
@@ -63,7 +74,7 @@ export class ClaudeBackend implements Backend {
   }
 
   private run(sessionId: string, fresh: boolean, args: SendArgs): Promise<TurnResult> {
-    const stored = this.load()[sessionId];
+    const stored = this.load(sessionId)!;
     const cliArgs = [
       "-p",
       "--output-format", "stream-json",
@@ -93,7 +104,9 @@ export class ClaudeBackend implements Backend {
         if (line) this.onEvent(job, line);
       }
     });
-    proc.stderr!.setEncoding("utf8").on("data", (c: string) => (stderr += c));
+    proc.stderr!.setEncoding("utf8").on("data", (c: string) => (stderr = (stderr + c).slice(-STDERR_KEEP)));
+    // EPIPE if claude exits before reading the prompt; the close handler reports the failure.
+    proc.stdin!.on("error", () => {});
     proc.on("error", (e) => {
       job.error = `failed to start ${this.bin}: ${e.message}`;
       job.done = true;
@@ -102,7 +115,7 @@ export class ClaudeBackend implements Backend {
       if (buf.trim()) this.onEvent(job, buf.trim());
       if (code !== 0 && !job.text && !job.error) job.error = `claude exited with code ${code}: ${stderr.slice(-800)}`;
       job.done = true;
-      const s = this.load()[sessionId];
+      const s = this.load(sessionId);
       if (s) {
         s.turns.push({ role: "assistant", text: job.text ?? job.error ?? "", actions: job.actions });
         s.updated = new Date().toISOString();
@@ -139,9 +152,13 @@ export class ClaudeBackend implements Backend {
   async status(sessionId: string, waitS: number): Promise<TurnResult> {
     const job = this.jobs.get(sessionId);
     if (!job) {
-      const last = this.load()[sessionId]?.turns.at(-1);
-      if (!last) throw new Error(`Unknown claude session ${sessionId}`);
-      return { sessionId, status: "done", text: last.role === "assistant" ? last.text : undefined, actions: last.actions };
+      const s = this.load(sessionId);
+      if (!s) throw new Error(`Unknown claude session ${sessionId}`);
+      const last = s.turns.at(-1);
+      if (last?.role !== "assistant") {
+        return { sessionId, status: "error", text: "No answer was recorded for the last message (the bridge restarted mid-turn?). Send it again with reply." };
+      }
+      return { sessionId, status: "done", text: last.text, actions: last.actions };
     }
     const deadline = Date.now() + waitS * 1000;
     while (!job.done && Date.now() < deadline) await sleep(500);
@@ -150,13 +167,13 @@ export class ClaudeBackend implements Backend {
   }
 
   async history(sessionId: string, limit: number): Promise<HistoryEntry[]> {
-    const s = this.load()[sessionId];
+    const s = this.load(sessionId);
     if (!s) throw new Error(`Unknown claude session ${sessionId}`);
     return s.turns.slice(-limit);
   }
 
   async list(): Promise<SessionSummary[]> {
-    return Object.values(this.load())
+    return this.loadAll()
       .filter((s) => s.cwd === this.cwd)
       .sort((a, b) => b.updated.localeCompare(a.updated))
       .slice(0, 30)
@@ -172,7 +189,7 @@ export class ClaudeBackend implements Backend {
     const job = this.jobs.get(sessionId);
     if (job && !job.done) {
       job.error = "aborted";
-      job.proc.kill();
+      killTree(job.proc);
     }
   }
 
@@ -183,5 +200,34 @@ export class ClaudeBackend implements Backend {
       modes: { review: "--permission-mode plan (read-only)", delegate: "--permission-mode acceptEdits (can edit files)" },
       delegateAllowedTools: process.env.OC_MCP_CLAUDE_ALLOWED_TOOLS ?? "(none; set OC_MCP_CLAUDE_ALLOWED_TOOLS to e.g. \"Bash(npm test:*)\")",
     };
+  }
+}
+
+function writeAtomic(file: string, data: string): void {
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, data);
+  renameSync(tmp, file);
+}
+
+function migrateLegacyStore(): void {
+  if (!existsSync(LEGACY_STORE)) return;
+  try {
+    const all: Record<string, StoredSession> = JSON.parse(readFileSync(LEGACY_STORE, "utf8"));
+    for (const s of Object.values(all)) {
+      const file = join(STORE_DIR, `${s.id}.json`);
+      if (UUID.test(s.id) && !existsSync(file)) writeAtomic(file, JSON.stringify(s, null, 2));
+    }
+    renameSync(LEGACY_STORE, LEGACY_STORE + ".bak");
+  } catch {
+    // Another bridge migrated it first, or the file is unreadable; either way, carry on.
+  }
+}
+
+/** On Windows kill() only ends the direct child, leaving the shells/tools it started running. */
+function killTree(proc: ChildProcess): void {
+  if (process.platform === "win32" && proc.pid) {
+    spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { windowsHide: true });
+  } else {
+    proc.kill();
   }
 }
